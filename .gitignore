@@ -1,0 +1,46 @@
+# Gradle
+.gradle/
+.kotlin/
+build/
+local.properties
+
+# CMake run by hand, outside Gradle's build/ (an IDE's, or cmake -B in native/)
+native/build*/
+native/out/
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+
+# Native libraries built or copied anywhere but build/ (releases carry them in their natives jars)
+*.dll
+*.so
+*.dylib
+*.lib
+*.exp
+*.pdb
+
+# IDEs and editors (VS Code / VSCodium's Java extension: bin/, .project, .classpath, .settings/, .factorypath)
+bin/
+.project
+.classpath
+.settings/
+.factorypath
+.idea/
+*.iml
+.vscode/
+.vs/
+out/
+
+# Python (docs/benchmarks/charts.py)
+__pycache__/
+*.pyc
+
+# Operating systems
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and crash dumps (a JVM's hs_err when a native call goes wrong)
+*.log
+hs_err_pid*.log
+replay_pid*.log

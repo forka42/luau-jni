@@ -1,0 +1,29 @@
+{
+  "reflection": [
+    {
+      "type": "io.github.pingsocc.luaujni.LuauJni$Callbacks",
+      "jniAccessible": true,
+      "methods": [
+        { "name": "call", "parameterTypes": ["int", "long"] }
+      ]
+    },
+    {
+      "type": "io.github.pingsocc.luaujni.LuauError",
+      "jniAccessible": true,
+      "methods": [
+        { "name": "<init>", "parameterTypes": ["java.lang.String"] }
+      ]
+    },
+    {
+      "type": "java.lang.Throwable",
+      "jniAccessible": true,
+      "methods": [
+        { "name": "getMessage", "parameterTypes": [] },
+        { "name": "toString", "parameterTypes": [] }
+      ]
+    }
+  ],
+  "resources": [
+    { "glob": "io/github/pingsocc/luaujni/natives/**" }
+  ]
+}

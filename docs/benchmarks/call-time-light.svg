@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="266" viewBox="0 0 720 266" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" role="img" aria-label="Time per call from Luau into Java and back">
+<rect width="720" height="266" rx="6" fill="#ffffff"/>
+<text x="16" y="30" font-size="16" font-weight="600" fill="#1f2328">Time per call from Luau into Java and back</text>
+<text x="16" y="52" font-size="12.5" fill="#59636e">Microseconds per call, lower is better (a property read in a game engine's script bridge)</text>
+<rect x="16" y="70" width="12" height="12" rx="2" fill="#2a78d6"/>
+<text x="34" y="80.5" font-size="12.5" fill="#1f2328">luau-jni (JNI)</text>
+<rect x="156.8" y="70" width="12" height="12" rx="2" fill="#eb6834"/>
+<text x="174.8" y="80.5" font-size="12.5" fill="#1f2328">luau-java (FFM)</text>
+<line x1="180.0" y1="98" x2="180.0" y2="228" stroke="#d1d9e0" stroke-width="1"/>
+<text x="180.0" y="246" font-size="12" fill="#59636e" text-anchor="middle">0 µs</text>
+<line x1="338.66666666666663" y1="98" x2="338.66666666666663" y2="228" stroke="#d1d9e0" stroke-width="1"/>
+<text x="338.66666666666663" y="246" font-size="12" fill="#59636e" text-anchor="middle">20 µs</text>
+<line x1="497.3333333333333" y1="98" x2="497.3333333333333" y2="228" stroke="#d1d9e0" stroke-width="1"/>
+<text x="497.3333333333333" y="246" font-size="12" fill="#59636e" text-anchor="middle">40 µs</text>
+<line x1="656.0" y1="98" x2="656.0" y2="228" stroke="#d1d9e0" stroke-width="1"/>
+<text x="656.0" y="246" font-size="12" fill="#59636e" text-anchor="middle">60 µs</text>
+<text x="166" y="131.5" font-size="13" fill="#1f2328" text-anchor="end">GraalVM native image</text>
+<path d="M180,104 H185.12333333333333 Q189.12333333333333,104 189.12333333333333,108 V122 Q189.12333333333333,126 185.12333333333333,126 H180 Z" fill="#2a78d6"/>
+<text x="195.12333333333333" y="119.5" font-size="12.5" font-weight="600" fill="#1f2328">1.15 µs</text>
+<path d="M180,128 H642.48 Q646.48,128 646.48,132 V146 Q646.48,150 642.48,150 H180 Z" fill="#eb6834"/>
+<text x="652.48" y="143.5" font-size="12.5" font-weight="600" fill="#1f2328">58.8 µs</text>
+<text x="166" y="203.5" font-size="13" fill="#1f2328" text-anchor="end">JVM (HotSpot)</text>
+<path d="M180,176 H186.55133333333333 Q190.55133333333333,176 190.55133333333333,180 V194 Q190.55133333333333,198 186.55133333333333,198 H180 Z" fill="#2a78d6"/>
+<text x="196.55133333333333" y="191.5" font-size="12.5" font-weight="600" fill="#1f2328">1.33 µs</text>
+<path d="M180,200 H187.02733333333333 Q191.02733333333333,200 191.02733333333333,204 V218 Q191.02733333333333,222 187.02733333333333,222 H180 Z" fill="#eb6834"/>
+<text x="197.02733333333333" y="215.5" font-size="12.5" font-weight="600" fill="#1f2328">1.39 µs</text>
+</svg>
