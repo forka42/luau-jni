@@ -1,14 +1,14 @@
 {
   "reflection": [
     {
-      "type": "io.github.pingsocc.luaujni.LuauJni$Callbacks",
+      "type": "io.github.forka42.luaujni.LuauJni$Callbacks",
       "jniAccessible": true,
       "methods": [
         { "name": "call", "parameterTypes": ["int", "long"] }
       ]
     },
     {
-      "type": "io.github.pingsocc.luaujni.LuauError",
+      "type": "io.github.forka42.luaujni.LuauError",
       "jniAccessible": true,
       "methods": [
         { "name": "<init>", "parameterTypes": ["java.lang.String"] }
@@ -24,6 +24,6 @@
     }
   ],
   "resources": [
-    { "glob": "io/github/pingsocc/luaujni/natives/**" }
+    { "glob": "io/github/forka42/luaujni/natives/**" }
   ]
 }

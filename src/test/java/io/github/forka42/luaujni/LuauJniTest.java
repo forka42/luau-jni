@@ -1,4 +1,4 @@
-package io.github.pingsocc.luaujni;
+package io.github.forka42.luaujni;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -9,7 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-import static io.github.pingsocc.luaujni.LuauJni.*;
+import static io.github.forka42.luaujni.LuauJni.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class LuauJniTest {

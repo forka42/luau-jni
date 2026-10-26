@@ -10,7 +10,7 @@ plugins {
     `maven-publish`
 }
 
-group = "io.github.pingsocc"
+group = "io.github.forka42"
 version = providers.gradleProperty("version").get()
 
 repositories { mavenCentral() }
@@ -63,7 +63,7 @@ val cmakeBuild = tasks.register("cmakeBuild") {
 val nativesJar = tasks.register<Jar>("nativesJar") {
     description = "This platform's native library, as a jar (luau-jni-natives-<platform>)."
     archiveBaseName = "luau-jni-natives-$platform"
-    from(library) { into("io/github/pingsocc/luaujni/natives/$platform") }
+    from(library) { into("io/github/forka42/luaujni/natives/$platform") }
     dependsOn(cmakeBuild)
 }
 tasks.assemble { dependsOn(nativesJar) }

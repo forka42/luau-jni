@@ -2,7 +2,7 @@
 
 [Luau](https://github.com/luau-lang/luau)'s compiler, VM and native code generator for Java, through JNI.
 
-It's a thin binding: `io.github.pingsocc.luaujni.LuauJni` is Luau's C API as static methods. A VM is a `long` (its `lua_State*`), and strings are byte arrays, so any Luau string survives the trip, not only valid UTF-8. It's built for GraalVM Native Image as much as for the JVM. Native Image runs JNI calls at full speed, but it runs FFM bindings such as [luau-java](https://github.com/hollow-cube/luau-java)'s about 50 times slower than the JVM does ([benchmarks](#benchmarks)).
+It's a thin binding: `io.github.forka42.luaujni.LuauJni` is Luau's C API as static methods. A VM is a `long` (its `lua_State*`), and strings are byte arrays, so any Luau string survives the trip, not only valid UTF-8. It's built for GraalVM Native Image as much as for the JVM. Native Image runs JNI calls at full speed, but it runs FFM bindings such as [luau-java](https://github.com/hollow-cube/luau-java)'s about 50 times slower than the JVM does ([benchmarks](#benchmarks)).
 
 - **Errors:** an error raised in Luau is thrown as `LuauError`, with the stack left as it was before the call. Calls that can run a metamethod (`getField`, `setField`, `getGlobal`, `setGlobal`) are protected, so a Luau error never unwinds through a JNI frame.
 - **Java functions:** `pushFunction` takes a `LuauJni.Callbacks` and an index. If the Java code throws, its message is raised in Luau as an error.
@@ -16,16 +16,16 @@ Each release's jars are attached to its GitHub release, so Gradle can fetch them
 ```kotlin
 repositories {
     ivy {
-        url = uri("https://github.com/pingsocc/luau-jni/releases/download")
+        url = uri("https://github.com/forka42/luau-jni/releases/download")
         patternLayout { artifact("v[revision]/[module]-[revision].[ext]") }
         metadataSources { artifact() }
-        content { includeGroup("io.github.pingsocc") }
+        content { includeGroup("io.github.forka42") }
     }
 }
 
 dependencies {
-    implementation("io.github.pingsocc:luau-jni:0.1.0")
-    runtimeOnly("io.github.pingsocc:luau-jni-natives-windows-x64:0.1.0")   // windows-x64, linux-x64, linux-arm64, macos-arm64
+    implementation("io.github.forka42:luau-jni:0.1.0")
+    runtimeOnly("io.github.forka42:luau-jni-natives-windows-x64:0.1.0")   // windows-x64, linux-x64, linux-arm64, macos-arm64
 }
 ```
 

@@ -1,4 +1,4 @@
-// luau-jni: Luau's C API for Java, through JNI (io.github.pingsocc.luaujni.LuauJni). Strings cross as byte arrays, so
+// luau-jni: Luau's C API for Java, through JNI (io.github.forka42.luaujni.LuauJni). Strings cross as byte arrays, so
 // any Luau string (not only valid UTF-8) survives the trip. A Java function is a C closure with two upvalues: a JNI
 // global reference to its LuauJni.Callbacks (as light userdata) and its index there; it calls Callbacks.call(index, L),
 // and a Java exception becomes a Luau error once Java has returned. Calls that can run Luau code (a metamethod) are
@@ -149,20 +149,20 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* jvm, void*) {
     vm = jvm;
     JNIEnv* env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) return JNI_ERR;
-    jclass callbacks = env->FindClass("io/github/pingsocc/luaujni/LuauJni$Callbacks");
+    jclass callbacks = env->FindClass("io/github/forka42/luaujni/LuauJni$Callbacks");
     if (!callbacks) return JNI_ERR;
     callMethod = env->GetMethodID(callbacks, "call", "(IJ)I");
     jclass throwable = env->FindClass("java/lang/Throwable");
     messageMethod = env->GetMethodID(throwable, "getMessage", "()Ljava/lang/String;");
     toStringMethod = env->GetMethodID(throwable, "toString", "()Ljava/lang/String;");
-    jclass error = env->FindClass("io/github/pingsocc/luaujni/LuauError");
+    jclass error = env->FindClass("io/github/forka42/luaujni/LuauError");
     if (!callMethod || !messageMethod || !toStringMethod || !error) return JNI_ERR;
     errorClass = static_cast<jclass>(env->NewGlobalRef(error));
     defaultFlags();
     return JNI_VERSION_1_6;
 }
 
-#define FN(ret, name, ...) JNIEXPORT ret JNICALL Java_io_github_pingsocc_luaujni_LuauJni_##name(JNIEnv* env, jclass, ##__VA_ARGS__)
+#define FN(ret, name, ...) JNIEXPORT ret JNICALL Java_io_github_forka42_luaujni_LuauJni_##name(JNIEnv* env, jclass, ##__VA_ARGS__)
 
 // Bytecode, or (Luau's convention) a 0 byte and the error.
 FN(jbyteArray, compile, jbyteArray source, jint optimizationLevel, jint debugLevel, jobjectArray mutableGlobals) {

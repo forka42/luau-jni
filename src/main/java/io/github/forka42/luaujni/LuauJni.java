@@ -1,4 +1,4 @@
-package io.github.pingsocc.luaujni;
+package io.github.forka42.luaujni;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -55,7 +55,7 @@ public final class LuauJni {
 
     /** Where this platform's library is in its natives jar. */
     public static String resource() {
-        return "/io/github/pingsocc/luaujni/natives/" + platform() + "/" + System.mapLibraryName(NAME);
+        return "/io/github/forka42/luaujni/natives/" + platform() + "/" + System.mapLibraryName(NAME);
     }
 
     public static boolean isLoaded() { return loaded; }
