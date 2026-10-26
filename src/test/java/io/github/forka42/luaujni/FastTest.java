@@ -128,6 +128,106 @@ class FastTest {
         assertEquals(7, gone[1]);
     }
 
+    // Each tag has its own handles: the same id under two tags is two objects, each with its own tag.
+    @Test void tagsDontShareHandles() {
+        newTable(L); setHandleMetatable(L, 1);
+        newTable(L); setHandleMetatable(L, 2);
+        pushHandle(L, 1, 7);
+        pushHandle(L, 2, 7);
+        assertEquals(7, toHandle(L, -2, 1));
+        assertEquals(7, toHandle(L, -1, 2));
+        assertEquals(-1, toHandle(L, -1, 1), "tag 2's handle isn't tag 1's");
+        setTop(L, 0);
+    }
+
+    // A retired id with no handle left in Luau is reusable at once; one Luau still holds becomes reusable only once
+    // that handle's been collected, and never while a script keeps it.
+    @Test void retiredIdsAreReusableOnlyOnceLuauLetsGo() {
+        newTable(L); setHandleMetatable(L, 1);
+        callbacks = (id, l, base) -> { frame.retHandle(base, 0, 1, (long) frame.number(base, 0)); return 1; };
+        fn(0, "get");
+
+        // Never pushed, or pushed and let go before: reusable now.
+        assertTrue(retireHandle(L, 1, 3));
+        pushHandle(L, 1, 4); setTop(L, 0);
+        collectGarbage(L); collectGarbage(L);
+        assertTrue(retireHandle(L, 1, 4), "its handle was collected: nothing holds it");
+        assertNull(drainReusable(L), "nothing waits to be reusable");
+
+        // Held by a script: not reusable, however often the collector runs.
+        run("kept = get(5)");
+        assertFalse(retireHandle(L, 1, 5));
+        for (int i = 0; i < 3; i++) collectGarbage(L);
+        assertNull(drainReusable(L), "a script still has it");
+        run("assert(kept ~= nil)");
+
+        // Let go: listed as reusable once collected, and only once.
+        run("kept = nil");
+        collectGarbage(L); collectGarbage(L);
+        assertArrayEquals(new long[]{1, 5}, drainReusable(L));
+        assertNull(drainReusable(L), "listed once");
+
+        // A handle collected without being retired isn't listed as reusable (only drainCollected sees it).
+        run("local tmp = get(6)");
+        setTop(L, 0);
+        collectGarbage(L); collectGarbage(L);
+        assertNull(drainReusable(L));
+    }
+
+    // Ids reused lowest first, as a place churning objects reuses them: the ids stay dense and Luau's heap stays put
+    // (ids that only ever grow make the tag's cache grow, and rehash, without end).
+    @Test void reusedIdsKeepTheCacheSmall() {
+        newTable(L); setHandleMetatable(L, 1);
+        var free = new java.util.BitSet();
+        int next = 1, live = 2000;
+        var held = new java.util.ArrayDeque<Long>();
+        for (int i = 0; i < live; i++) { pushHandle(L, 1, next); held.add((long) next++); setTop(L, 0); }
+        long heapAtRound5 = -1;
+        for (int round = 0; round < 50; round++) {
+            for (int k = 0; k < 500; k++) {
+                long old = held.poll();
+                if (retireHandle(L, 1, old)) free.set((int) old);
+                long[] back = drainReusable(L);
+                if (back != null) for (int j = 1; j < back.length; j += 2) free.set((int) back[j]);
+                int id = free.isEmpty() ? next++ : free.nextSetBit(0);
+                free.clear(id);
+                pushHandle(L, 1, id);
+                setTop(L, 0);
+                held.add((long) id);
+            }
+            collectGarbage(L);
+            if (round == 5) heapAtRound5 = heapKb();
+        }
+        assertTrue(next <= live * 2 + 1, "ids stayed dense: the highest is " + (next - 1));
+        assertTrue(heapKb() <= heapAtRound5 + 64, "the heap stayed put: " + heapAtRound5 + " KB, then " + heapKb());
+    }
+
+    // Stepping the collector finishes cycles: a retired handle let go becomes reusable without a full collection.
+    @Test void gcStepsFinishCycles() {
+        newTable(L); setHandleMetatable(L, 1);
+        pushHandle(L, 1, 9);
+        assertFalse(retireHandle(L, 1, 9));
+        setTop(L, 0);
+        int before = gcCount(L);
+        assertTrue(before > 0);
+        boolean finished = false;
+        for (int i = 0; i < 10_000 && !finished; i++) finished = gcStep(L, 64);
+        assertTrue(finished, "a cycle finished");
+        for (int i = 0; i < 10_000 && drainReusablePeek() == null; i++) gcStep(L, 64);
+        assertArrayEquals(new long[]{1, 9}, reusable);
+    }
+
+    private long[] reusable;
+    private long[] drainReusablePeek() { long[] r = drainReusable(L); if (r != null) reusable = r; return reusable; }
+
+    private long heapKb() {
+        run("heap = gcinfo()");
+        getGlobal(L, b("heap"));
+        long kb = (long) toNumber(L, -1);
+        setTop(L, 0);
+        return kb;
+    }
+
     // Fields: read and written from a record in native memory without calling Java; anything else falls back to Java.
     @Test void fieldsAreReadAndWrittenInTheRecord() {
         callbacks = (id, l, base) -> { seen.add("fallback " + frame.string(l, base, 1)); frame.retNumber(base, 0, -1); return 1; };

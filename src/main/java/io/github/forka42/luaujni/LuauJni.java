@@ -143,6 +143,14 @@ public final class LuauJni {
     public static native void sandbox(long L);
     /** A full garbage collection now. */
     public static native void collectGarbage(long L);
+    /**
+     * A step of Luau's incremental collector, about kb kilobytes of its work (0: a step of Luau's own size); true if it
+     * finished a cycle. A host that runs one each frame has cycles finish at a pace it sets, rather than only when the
+     * scripts allocate enough (so handles a script let go are collected, and their retired ids reusable, in good time).
+     */
+    public static native boolean gcStep(long L, int kb);
+    /** Luau's heap, in kilobytes. */
+    public static native int gcCount(long L);
 
     /** Whether the native code generator can run here. */
     public static native boolean codegenSupported();
@@ -251,6 +259,15 @@ public final class LuauJni {
     public static native long toHandle(long L, int index, int tag);
     /** Handles Luau has collected since this was last asked (it holds them no more): tag, id, tag, id... */
     public static native long[] drainCollected(long L);
+    /**
+     * An id retired: Java won't push (tag, id) again until it reuses the id for something new. Returns true if no handle
+     * for it is left in Luau, so the id can be reused now; false if Luau still holds one, in which case the id is listed
+     * by {@link #drainReusable} once that handle has been collected. Reusing ids keeps them dense, and the tag's cache of
+     * handles small: ids that only ever grow make it grow, and rehash, without end.
+     */
+    public static native boolean retireHandle(long L, int tag, long id);
+    /** Retired ids whose last handle Luau has collected since this was last asked: tag, id, tag, id... (null: none). */
+    public static native long[] drainReusable(long L);
     public static native void pushVector(long L, float x, float y, float z);
     /**
      * The Luau buffer at index as a direct ByteBuffer over its own memory, not a copy (bulk data: a thousand transforms

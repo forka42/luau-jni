@@ -156,7 +156,8 @@ enum : int8_t { T_NONE = 0, T_NIL, T_BOOLEAN, T_NUMBER, T_VECTOR, T_STRING, T_HA
 
 // A handle's userdata: Java's id for the object, its tag (kept for the destructor, which isn't told it), and its record
 // in the VM's store (fields: see Fields), if it has one (-1: none).
-struct Handle { int64_t id; int32_t tag; int32_t record; };
+// retired: Java has retired its id (retireHandle) while Luau still held this; its id is reusable once it's collected.
+struct Handle { int64_t id; int32_t tag; int32_t record; int32_t retired; };
 
 // ---- fields: a handle's plain data, in native memory both sides read, served without calling Java
 //
@@ -179,10 +180,11 @@ struct Fast {
     jobject callbacks = nullptr;                            // the VM's FastCallbacks (a global reference)
     char* frame = nullptr;
     int depth = 0;
-    int cache = LUA_NOREF;                                  // a weak-valued table: id -> handle
+    int caches[128];                                        // by tag: a weak-valued table, id -> handle (made when first needed)
     std::unordered_map<std::string, int16_t> atoms;         // name -> atom
     std::vector<int> atomRefs;                              // atom -> a ref to its string
     std::vector<int64_t> collected;                         // handles collected since Java last asked: tag, id, tag, id...
+    std::vector<int64_t> reusable;                          // retired ids whose handle has been collected since: tag, id...
     char* store = nullptr;                                  // handles' records (storeInit)
     int64_t storeSize = 0;
     Fields fields[128];                                     // by tag
@@ -205,6 +207,7 @@ void destructor(lua_State* L, void* p) {
     auto* h = static_cast<Handle*>(p);
     f->collected.push_back(h->tag);
     f->collected.push_back(h->id);
+    if (h->retired) { f->reusable.push_back(h->tag); f->reusable.push_back(h->id); }
 }
 
 inline void put32(char* p, int32_t v) { memcpy(p, &v, 4); }
@@ -261,17 +264,46 @@ void writeArg(lua_State* L, int i, char* base, char* s, int32_t& top) {
 }
 
 // The userdata for a handle: the one Luau has already, if it has one (so it's the same object), else a new one.
-void pushHandle(lua_State* L, Fast* f, int tag, int64_t id, int32_t record = -1) {
-    lua_getref(L, f->cache);
+// A tag's cache pushed: its handles by id, values weak (one userdata an id while Luau holds it). Small ids are integer
+// keys (a Luau table's array part, when they're dense: an id reused costs nothing); others are number keys.
+void pushCache(lua_State* L, Fast* f, int tag) {
+    int& ref = f->caches[tag & 127];
+    if (ref == LUA_NOREF) {
+        lua_newtable(L);
+        lua_newtable(L);
+        lua_pushstring(L, "v");
+        lua_setfield(L, -2, "__mode");
+        lua_setmetatable(L, -2);
+        ref = lua_ref(L, -1);
+        return;
+    }
+    lua_getref(L, ref);
+}
+
+inline bool smallId(int64_t id) { return id >= 1 && id <= INT32_MAX; }
+
+// cache[id] pushed (the cache at -1).
+void cacheGet(lua_State* L, int64_t id) {
+    if (smallId(id)) { lua_rawgeti(L, -1, static_cast<int>(id)); return; }
     lua_pushnumber(L, static_cast<double>(id));
     lua_rawget(L, -2);
+}
+
+void pushHandle(lua_State* L, Fast* f, int tag, int64_t id, int32_t record = -1) {
+    pushCache(L, f, tag);
+    cacheGet(L, id);
     if (lua_type(L, -1) == LUA_TUSERDATA) { lua_remove(L, -2); return; }
     lua_pop(L, 1);
     auto* h = static_cast<Handle*>(lua_newuserdatataggedwithmetatable(L, sizeof(Handle), tag));
-    h->id = id; h->tag = tag; h->record = record;
-    lua_pushnumber(L, static_cast<double>(id));
-    lua_pushvalue(L, -2);
-    lua_rawset(L, -4);
+    h->id = id; h->tag = tag; h->record = record; h->retired = 0;
+    if (smallId(id)) {
+        lua_pushvalue(L, -1);
+        lua_rawseti(L, -3, static_cast<int>(id));
+    } else {
+        lua_pushnumber(L, static_cast<double>(id));
+        lua_pushvalue(L, -2);
+        lua_rawset(L, -4);
+    }
     lua_remove(L, -2);
 }
 
@@ -499,6 +531,10 @@ FN(void, openLibs, jlong L) { luaL_openlibs(S(L)); }
 // Luau's built-in calls (math, vector, buffer...) take their fast paths.
 FN(void, sandbox, jlong L) { luaL_sandbox(S(L)); }
 FN(void, collectGarbage, jlong L) { lua_gc(S(L), LUA_GCCOLLECT, 0); }
+// A step of the incremental collector, about kb kilobytes of its work (0: Luau's own step); true if it finished a cycle.
+FN(jboolean, gcStep, jlong L, jint kb) { return lua_gc(S(L), LUA_GCSTEP, kb) ? JNI_TRUE : JNI_FALSE; }
+// Luau's heap, in kilobytes.
+FN(jint, gcCount, jlong L) { return lua_gc(S(L), LUA_GCCOUNT, 0); }
 
 FN(jboolean, codegenSupported) { return luau_codegen_supported() ? JNI_TRUE : JNI_FALSE; }
 FN(void, codegenCreate, jlong L) { luau_codegen_create(S(L)); }
@@ -607,13 +643,7 @@ FN(jobject, fastInit, jlong L, jlong callbacks) {
     f->frame = static_cast<char*>(calloc(FRAMES, FRAME_SIZE));
     lua_callbacks(l)->userdata = f;
     lua_callbacks(l)->useratom = userAtom;
-    lua_newtable(l);                                       // the handles' cache, its values weak
-    lua_newtable(l);
-    lua_pushstring(l, "v");
-    lua_setfield(l, -2, "__mode");
-    lua_setmetatable(l, -2);
-    f->cache = lua_ref(l, -1);
-    lua_pop(l, 1);
+    for (int& c : f->caches) c = LUA_NOREF;                  // (the handles' caches: made a tag at a time, when first needed)
     return env->NewDirectByteBuffer(f->frame, static_cast<jlong>(FRAMES) * FRAME_SIZE);
 }
 
@@ -658,6 +688,29 @@ FN(jlong, toHandle, jlong L, jint i, jint tag) {
     return static_cast<Handle*>(lua_touserdatatagged(S(L), i, t))->id;
 }
 // The handles collected since last asked: tag, id, tag, id...
+// Java will push (tag, id) no more till it reuses the id. true: no handle for it is left in Luau, the id is reusable now;
+// false: Luau still holds one, and the id is listed as reusable (drainReusable) once that's been collected.
+FN(jboolean, retireHandle, jlong L, jint tag, jlong id) {
+    lua_State* l = S(L);
+    Fast* f = fastOf(l);
+    if (!f) return JNI_TRUE;
+    pushCache(l, f, tag);
+    cacheGet(l, id);
+    bool held = lua_type(l, -1) == LUA_TUSERDATA;
+    if (held) static_cast<Handle*>(lua_touserdata(l, -1))->retired = 1;
+    lua_pop(l, 2);
+    return held ? JNI_FALSE : JNI_TRUE;
+}
+// Retired ids whose handle Luau has collected since this was last asked: tag, id, tag, id... (null: none).
+FN(jlongArray, drainReusable, jlong L) {
+    Fast* f = fastOf(S(L));
+    if (!f || f->reusable.empty()) return nullptr;
+    jsize n = static_cast<jsize>(f->reusable.size());
+    jlongArray out = env->NewLongArray(n);
+    env->SetLongArrayRegion(out, 0, n, reinterpret_cast<const jlong*>(f->reusable.data()));
+    f->reusable.clear();
+    return out;
+}
 FN(jlongArray, drainCollected, jlong L) {
     Fast* f = fastOf(S(L));
     jsize n = f ? static_cast<jsize>(f->collected.size()) : 0;
