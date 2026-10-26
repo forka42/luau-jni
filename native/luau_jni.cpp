@@ -166,7 +166,7 @@ struct Handle { int64_t id; int32_t tag; int32_t record; };
 // bytes are the bridge's: which of its fields Luau changed), and the record listed for Java (drainChanged) the first time
 // one of its fields is changed since Java last asked, so the list is a record long however often it's written. Anything else (a method, a name that's no field, a read-only field written) calls the
 // tag's Java fast function, as before.
-enum : int8_t { F_NUMBER = 1, F_VECTOR, F_BOOLEAN, F_ATOM, F_HANDLE };
+enum : int8_t { F_NUMBER = 1, F_VECTOR, F_BOOLEAN, F_ATOM, F_HANDLE, F_FLOAT };
 struct Field2 { int32_t offset = -1; int8_t type = 0; bool writable = false; int8_t bit = 0; };
 struct Fields {
     std::vector<Field2> byAtom;                             // atom -> field (offset -1: not one)
@@ -368,6 +368,7 @@ int fieldIndex(lua_State* L) {
         const char* r = f->store + h->record + fd->offset;
         switch (fd->type) {
             case F_NUMBER: lua_pushnumber(L, getD(r)); return 1;
+            case F_FLOAT: lua_pushnumber(L, getF(r)); return 1;
             case F_VECTOR: lua_pushvector(L, getF(r), getF(r + 4), getF(r + 8)); return 1;
             case F_BOOLEAN: lua_pushboolean(L, get32(r)); return 1;
             case F_ATOM: {
@@ -401,6 +402,7 @@ int fieldNewIndex(lua_State* L) {
         bool done = true;
         switch (fd->type) {
             case F_NUMBER: if (lua_type(L, 3) == LUA_TNUMBER) putD(r, lua_tonumber(L, 3)); else done = false; break;
+            case F_FLOAT: if (lua_type(L, 3) == LUA_TNUMBER) putF(r, static_cast<float>(lua_tonumber(L, 3))); else done = false; break;
             case F_VECTOR: if (const float* v = lua_tovector(L, 3)) { putF(r, v[0]); putF(r + 4, v[1]); putF(r + 8, v[2]); } else done = false; break;
             case F_BOOLEAN: if (lua_type(L, 3) == LUA_TBOOLEAN) put32(r, lua_toboolean(L, 3)); else done = false; break;
             default: done = false; break;
@@ -493,6 +495,9 @@ FN(void, close, jlong L) {
     if (f) { free(f->frame); free(f->store); delete f; }
 }
 FN(void, openLibs, jlong L) { luaL_openlibs(S(L)); }
+// The VM's globals and libraries made read-only (luaL_sandbox): code loaded after runs in a safe environment, where
+// Luau's built-in calls (math, vector, buffer...) take their fast paths.
+FN(void, sandbox, jlong L) { luaL_sandbox(S(L)); }
 FN(void, collectGarbage, jlong L) { lua_gc(S(L), LUA_GCCOLLECT, 0); }
 
 FN(jboolean, codegenSupported) { return luau_codegen_supported() ? JNI_TRUE : JNI_FALSE; }
@@ -552,6 +557,7 @@ FN(jint, rawGetField, jlong L, jint i, jbyteArray k) {
     return typeOf(lua_rawgetfield(S(L), i, s.c()));
 }
 FN(void, rawSetI, jlong L, jint i, jint n) { lua_rawseti(S(L), i, n); }
+FN(jint, rawGetI, jlong L, jint i, jint n) { return typeOf(lua_rawgeti(S(L), i, n)); }
 FN(jint, getGlobal, jlong L, jbyteArray k) {
     Str s(env, k);
     Field f{LUA_GLOBALSINDEX, s.c(), LUA_TNIL};
@@ -660,6 +666,19 @@ FN(jlongArray, drainCollected, jlong L) {
     return out;
 }
 FN(void, pushVector, jlong L, jfloat x, jfloat y, jfloat z) { lua_pushvector(S(L), x, y, z); }
+
+// The Luau buffer at index, as a direct ByteBuffer over its own memory (no copy), or null if it isn't one. Valid while
+// the buffer is: during the call it's an argument of, while it's on the stack.
+FN(jobject, bufferView, jlong L, jint i) {
+    size_t n = 0;
+    void* p = lua_tobuffer(S(L), i, &n);
+    return p ? env->NewDirectByteBuffer(p, static_cast<jlong>(n)) : nullptr;
+}
+// A new Luau buffer of size bytes (zeroed) pushed, as a direct ByteBuffer over it (valid while the buffer is).
+FN(jobject, newBuffer, jlong L, jint size) {
+    void* p = lua_newbuffer(S(L), static_cast<size_t>(size));
+    return env->NewDirectByteBuffer(p, size);
+}
 
 // The handles' records' memory (bytes long, zeroed), as a direct ByteBuffer; null if there's one already.
 FN(jobject, storeInit, jlong L, jlong size) {

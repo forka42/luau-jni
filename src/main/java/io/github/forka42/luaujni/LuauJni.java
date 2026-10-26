@@ -136,6 +136,11 @@ public final class LuauJni {
     public static native long open();
     public static native void close(long L);
     public static native void openLibs(long L);
+    /**
+     * Makes the VM's globals and libraries read-only (luaL_sandbox). Code loaded after runs in a safe environment, where
+     * Luau's built-in calls (math, vector, buffer, string...) take their fast paths: set the globals first.
+     */
+    public static native void sandbox(long L);
     /** A full garbage collection now. */
     public static native void collectGarbage(long L);
 
@@ -175,6 +180,8 @@ public final class LuauJni {
     public static native int rawGetField(long L, int index, byte[] name);
     /** t[i] = the value on top (popped), without metamethods. */
     public static native void rawSetI(long L, int index, int i);
+    /** t[i] pushed (t at index), and its type, without metamethods. */
+    public static native int rawGetI(long L, int index, int i);
     /** getField and setField on the running function's environment. */
     public static native int getGlobal(long L, byte[] name);
     public static native void setGlobal(long L, byte[] name);
@@ -245,15 +252,23 @@ public final class LuauJni {
     /** Handles Luau has collected since this was last asked (it holds them no more): tag, id, tag, id... */
     public static native long[] drainCollected(long L);
     public static native void pushVector(long L, float x, float y, float z);
+    /**
+     * The Luau buffer at index as a direct ByteBuffer over its own memory, not a copy (bulk data: a thousand transforms
+     * in one call), or null when it isn't a buffer. It's valid only while the buffer is: use it during the call it's an
+     * argument of, and keep no reference after.
+     */
+    public static native java.nio.ByteBuffer bufferView(long L, int index);
+    /** A new Luau buffer of size bytes (zeroed) pushed, and a view of it (valid while the buffer is, as bufferView's). */
+    public static native java.nio.ByteBuffer newBuffer(long L, int size);
 
     // ------------------------------------------------------------------------------------------------- fields
 
     /**
      * A field's type ({@link #defineFields}), as it's kept in a record: a number (8 bytes, a double); a vector (12: three
      * floats); a boolean (4: an int, 0 or 1); a name (4: an atom, -1 for nil); a handle (16: its tag, then its record (or
-     * -1), then its id; tag 0 for nil).
+     * -1), then its id; tag 0 for nil); a float (4: a number kept as a float, as a GPU reads it).
      */
-    public static final byte F_NUMBER = 1, F_VECTOR = 2, F_BOOLEAN = 3, F_ATOM = 4, F_HANDLE = 5;
+    public static final byte F_NUMBER = 1, F_VECTOR = 2, F_BOOLEAN = 3, F_ATOM = 4, F_HANDLE = 5, F_FLOAT = 6;
 
     /**
      * The handles' records: native memory, zeroed, size bytes, which Java writes their fields in (little-endian) and Luau

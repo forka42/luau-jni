@@ -90,6 +90,7 @@ public final class Bench {
     static final int A_NAME = 0, A_SPEED = 1, A_GETSPEED = 2;
     static final class Fast implements LuauJni.FastCallbacks {
         LuauJni.Frame frame;
+        java.nio.ByteBuffer store;
         double speed = 3;
         @Override public int call(int id, long L, int base) {
             LuauJni.Frame f = frame;
@@ -107,10 +108,25 @@ public final class Bench {
                     return f.error(L, base, "no such method");
                 }
                 case 6: f.retString(L, base, 0, f.string(L, base, 0)); return 1;
+                case 7: {                                                   // moveAll(buf): every part's position, at once
+                    var view = LuauJni.bufferView(L, f.stackIndex(base, 0)).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                    int n = view.capacity() / 12;
+                    for (int i = 0; i < n; i++) {                           // (into each part's record, as the engine would)
+                        int r = (i + 1) * 32 + 16;
+                        store.putFloat(r, view.getFloat(i * 12)); store.putFloat(r + 4, view.getFloat(i * 12 + 4)); store.putFloat(r + 8, view.getFloat(i * 12 + 8));
+                    }
+                    return 0;
+                }
+                case 8: {                                                   // moveAllPooled(buf): into a pool laid out as the buffer is
+                    var view = LuauJni.bufferView(L, f.stackIndex(base, 0));
+                    store.put(POOL, view, 0, view.capacity());               // (one copy: as a GPU buffer's upload would be)
+                    return 0;
+                }
                 default: return 0;
             }
         }
     }
+    static final int POOL = 1 << 19;                                        // (the transform pool, in the store's second half)
 
     static void row(String what, double ns) { System.out.printf(Locale.ROOT, "  %-40s %9.1f ns%n", what, ns); }
 
@@ -162,7 +178,8 @@ public final class Bench {
         if (nat) row("fast: part.Speed, native", timeLuau(L, function(L, "local p = part return function(n) local s = 0 for i = 1, n do s = s + p.Speed end return s end", 1, true), N));
 
         System.out.println("Fields: a handle's plain data in native memory, read and written without calling Java:");
-        var store = LuauJni.storeInit(L, 1 << 16).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        var store = LuauJni.storeInit(L, 1 << 20).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        fast.store = store;
         // A record at 0: its changed mask (0), Speed (number, at 8), Position (vector, at 16), Name (a name, at 28, read-only).
         store.putDouble(8, 3.0); store.putFloat(16, 1); store.putFloat(20, 2); store.putFloat(24, 3); store.putInt(28, A_NAME);
         LuauJni.defineFields(L, 2, new int[]{A_SPEED, 3, A_NAME}, new int[]{8, 16, 28},
@@ -192,6 +209,32 @@ public final class Bench {
         long[] changed = LuauJni.drainChanged(L);
         if (store.getDouble(8) != 7 || store.getFloat(20) != 5 || changed.length != 3 || store.getLong(0) != 0b11) throw new IllegalStateException("fields written wrong");
         System.out.println("  (read and written correctly; one record told, its mask " + Long.toBinaryString(store.getLong(0)) + ")");
+
+        System.out.println("Moving 10,000 parts a frame (per part):");
+        int parts = 10_000;
+        LuauJni.newTable(L);
+        for (int i = 0; i < parts; i++) { LuauJni.pushHandleRecord(L, 2, 1000 + i, (i + 1) * 32); LuauJni.rawSetI(L, -2, i + 1); }
+        LuauJni.setGlobal(L, b("parts"));
+        LuauJni.pushFastFunction(L, 7, false, b("moveAll")); LuauJni.setGlobal(L, b("moveAll"));
+        LuauJni.pushFastFunction(L, 8, false, b("moveAllPooled")); LuauJni.setGlobal(L, b("moveAllPooled"));
+        LuauJni.sandbox(L);                                                 // (as scripts run: Luau's built-in calls fast)
+        String eachField = "local ps = parts return function(n) local t = os.clock() for i = 1, n do ps[i].Position = vector.create(i, t, 0) end end";
+        String oneBuffer = "local mv = moveAll local b = buffer.create(10000 * 12) return function(n) local t = os.clock() "
+                + "for i = 0, n - 1 do buffer.writef32(b, i * 12, i) buffer.writef32(b, i * 12 + 4, t) buffer.writef32(b, i * 12 + 8, 0) end mv(b) end";
+        for (boolean nc : nat ? new boolean[]{false, true} : new boolean[]{false}) {
+            row("each part's field (" + (nc ? "native" : "interpreted") + ")", timeLuau(L, function(L, eachField, 1, nc), parts));
+            LuauJni.drainChanged(L);
+            for (int i = 0; i <= parts; i++) store.putLong(i * 32, 0);
+            row("one buffer, one call (" + (nc ? "native" : "interpreted") + ")", timeLuau(L, function(L, oneBuffer, 1, nc), parts));
+        }
+        if (store.getFloat(5 * 32 + 16) != 4) throw new IllegalStateException("moveAll didn't move them");
+        String pooled = oneBuffer.replace("local mv = moveAll", "local mv = moveAllPooled");
+        if (nat) row("one buffer, one call, into a pool (native)", timeLuau(L, function(L, pooled, 1, true), parts));
+        if (store.getFloat(POOL + 5 * 12) != 5) throw new IllegalStateException("moveAllPooled didn't move them");
+        String bufferOnly = "local b = buffer.create(10000 * 12) return function(n) local t = os.clock() "
+                + "for i = 0, n - 1 do buffer.writef32(b, i * 12, i) buffer.writef32(b, i * 12 + 4, t) buffer.writef32(b, i * 12 + 8, 0) end end";
+        row("(just writing the buffer, native)", timeLuau(L, function(L, bufferOnly, 1, nat), parts));
+        row("(just writing the buffer, O2 native)", timeLuau(L, function(L, bufferOnly, 2, nat), parts));
 
         System.out.println("Calls from Java into Luau (per call), classic API:");
         int add = function(L, "return function(x) return x + 1 end", 1, false);
