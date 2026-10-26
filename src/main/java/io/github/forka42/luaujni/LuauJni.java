@@ -206,4 +206,167 @@ public final class LuauJni {
     /** A JNI global reference to o (for pushFunction), until deleteGlobalRef. */
     public static native long newGlobalRef(Object o);
     public static native void deleteGlobalRef(long ref);
+
+    // ------------------------------------------------------------------------------------------------- fast functions
+
+    /**
+     * The Java side of fast functions ({@link #pushFastFunction}): a call crosses once. Its arguments are in the VM's
+     * {@link Frame} at base (read them there, not off the stack, though they're on it too); its results go in the frame
+     * too, and the return value says how many: n &gt;= 0 results; -1, an error (its message the first result:
+     * {@link Frame#error}); -2 - n, a yield with n results ({@link Frame#yield}). One per VM ({@link #fastInit}). An
+     * exception thrown here is raised in Luau as an error too, but more slowly than returning one.
+     */
+    @FunctionalInterface
+    public interface FastCallbacks {
+        int call(int id, long L, int base);
+    }
+
+    /**
+     * Fast functions for this VM: callbacks is {@link #newGlobalRef} of its {@link FastCallbacks}, kept while the VM is.
+     * Returns the VM's frames' memory, for a {@link Frame}; null if it has them already.
+     */
+    public static native java.nio.ByteBuffer fastInit(long L, long callbacks);
+    /**
+     * Names that cross fast functions' frames as numbers ({@link Frame#atom}, {@link Frame#retAtom}): names[i] is atom i
+     * (from 0; continuing from the last call's). Register them before code runs: a string's atom is worked out once.
+     */
+    public static native void registerAtoms(long L, byte[][] names);
+    /**
+     * A fast function: calling it calls the VM's FastCallbacks with id. namecall: it's a {@code __namecall} metamethod,
+     * and the method's name comes first in its frame (a string, its atom if it has one), before self and the arguments.
+     */
+    public static native void pushFastFunction(long L, int id, boolean namecall, byte[] name);
+    /** The table on top (popped) as the metatable for handles with this tag (1 to 127, set once a tag). */
+    public static native void setHandleMetatable(long L, int tag);
+    /** The handle for (tag, id): the same userdata for as long as Luau holds it, a new one after. */
+    public static native void pushHandle(long L, int tag, long id);
+    /** The id of the handle at index if it's one with this tag (0: any), else -1. */
+    public static native long toHandle(long L, int index, int tag);
+    /** Handles Luau has collected since this was last asked (it holds them no more): tag, id, tag, id... */
+    public static native long[] drainCollected(long L);
+    public static native void pushVector(long L, float x, float y, float z);
+
+    // ------------------------------------------------------------------------------------------------- fields
+
+    /**
+     * A field's type ({@link #defineFields}), as it's kept in a record: a number (8 bytes, a double); a vector (12: three
+     * floats); a boolean (4: an int, 0 or 1); a name (4: an atom, -1 for nil); a handle (16: its tag, then its record (or
+     * -1), then its id; tag 0 for nil).
+     */
+    public static final byte F_NUMBER = 1, F_VECTOR = 2, F_BOOLEAN = 3, F_ATOM = 4, F_HANDLE = 5;
+
+    /**
+     * The handles' records: native memory, zeroed, size bytes, which Java writes their fields in (little-endian) and Luau
+     * reads them from without calling Java ({@link #pushFieldIndex}). A record's first 8 bytes are its changed mask: bit
+     * i set when Luau wrote field i (defineFields' order); fields go after them. After {@link #fastInit}; null if it has one.
+     */
+    public static native java.nio.ByteBuffer storeInit(long L, long size);
+    /**
+     * Handles with this tag have fields: atoms[i] is at offsets[i] in each one's record, of types[i] (F_), and Luau may
+     * write it if writable[i]. Anything else that's read or written on them calls the fast function fallback (-1: none,
+     * an error), as {@code __index(self, key)} or {@code __newindex(self, key, value)}.
+     */
+    public static native void defineFields(long L, int tag, int[] atoms, int[] offsets, byte[] types, boolean[] writable, int fallback);
+    /** The tag's {@code __index} and {@code __newindex} (for its metatable), which serve its fields from records. */
+    public static native void pushFieldIndex(long L, int tag);
+    public static native void pushFieldNewIndex(long L, int tag);
+    /** A handle whose fields are in the record at offset record in the store. */
+    public static native void pushHandleRecord(long L, int tag, long id, int record);
+    /**
+     * The records whose fields Luau wrote since this was last asked: tag, id, record (its offset), ... each once, however
+     * often written; which fields, its changed mask says. Clear the mask (write 0) once they're seen to.
+     */
+    public static native long[] drainChanged(long L);
+
+    /**
+     * A VM's fast functions' frames, read and written in place (luau_jni.cpp's layout: keep the two in sync). A call's
+     * frame is at base (its FastCallbacks' argument): its arguments' slots (from 0: a __namecall's method name first),
+     * then its results' slots, which the call fills from 0, then string bytes. Methods take base so that nothing need be
+     * made per call; one Frame for the VM serves every call, nested ones too.
+     */
+    public static final class Frame {
+        public static final int FRAME_SIZE = 8192, HEADER = 16, SLOT = 24, MAX_SLOTS = 64;
+        public static final int RESULTS = HEADER + MAX_SLOTS * SLOT, STRINGS = RESULTS + MAX_SLOTS * SLOT;
+        /**
+         * A slot's type: none (past the last argument), nil, boolean, number, vector, string, handle, or on the stack
+         * (anything else: a table, a function... read it at {@link #stackIndex} with the C API's calls).
+         */
+        public static final int T_NONE = 0, T_NIL = 1, T_BOOLEAN = 2, T_NUMBER = 3, T_VECTOR = 4, T_STRING = 5, T_HANDLE = 6, T_STACK = 7;
+
+        private final java.nio.ByteBuffer b;
+        private final byte[] scratch = new byte[FRAME_SIZE];
+
+        public Frame(java.nio.ByteBuffer frames) { this.b = frames.order(java.nio.ByteOrder.LITTLE_ENDIAN); }
+
+        private static int arg(int base, int i) { return base + HEADER + i * SLOT; }
+        private static int res(int base, int k) { return base + RESULTS + k * SLOT; }
+
+        /** How many argument slots the call has (at most MAX_SLOTS: the rest are on the stack). */
+        public int count(int base) { return b.getInt(base); }
+        public int type(int base, int i) { return i >= 0 && i < count(base) ? b.get(arg(base, i)) : T_NONE; }
+        public boolean isNil(int base, int i) { int t = type(base, i); return t == T_NIL || t == T_NONE; }
+        public double number(int base, int i) { return type(base, i) == T_NUMBER ? b.getDouble(arg(base, i) + 8) : 0; }
+        /** Luau's truth: anything but nil and false. */
+        public boolean truthy(int base, int i) {
+            int t = type(base, i);
+            return t == T_BOOLEAN ? b.getInt(arg(base, i) + 4) != 0 : t != T_NIL && t != T_NONE;
+        }
+        public float x(int base, int i) { return b.getFloat(arg(base, i) + 8); }
+        public float y(int base, int i) { return b.getFloat(arg(base, i) + 12); }
+        public float z(int base, int i) { return b.getFloat(arg(base, i) + 16); }
+        /** A string's atom ({@link #registerAtoms}), or -1 (not a string, or not a registered name). */
+        public int atom(int base, int i) { return type(base, i) == T_STRING ? b.getInt(arg(base, i) + 4) : -1; }
+        /** A string's bytes' length, or -1 when it's not a string in the frame. */
+        public int stringLength(int base, int i) { return type(base, i) == T_STRING ? b.getInt(arg(base, i) + 12) : -1; }
+        /** A string (as UTF-8), or null when it isn't one (a long one is read off the stack). */
+        public String string(long L, int base, int i) {
+            int t = type(base, i);
+            if (t == T_STACK) { byte[] s = toBytes(L, stackIndex(base, i)); return s == null ? null : new String(s, java.nio.charset.StandardCharsets.UTF_8); }
+            if (t != T_STRING) return null;
+            int at = base + b.getInt(arg(base, i) + 8), n = b.getInt(arg(base, i) + 12);
+            b.get(at, scratch, 0, n);
+            return new String(scratch, 0, n, java.nio.charset.StandardCharsets.UTF_8);
+        }
+        public int handleTag(int base, int i) { return type(base, i) == T_HANDLE ? b.getInt(arg(base, i) + 4) : 0; }
+        /** A handle's id, or -1 when it isn't one. */
+        public long handle(int base, int i) { return type(base, i) == T_HANDLE ? b.getLong(arg(base, i) + 8) : -1; }
+        /** Where a T_STACK argument is on the stack. */
+        public int stackIndex(int base, int i) { return b.getInt(arg(base, i) + 4); }
+
+        // ---- results: slot k (from 0); the call returns how many it filled
+
+        public void retNil(int base, int k) { b.put(res(base, k), (byte) T_NIL); }
+        public void retBoolean(int base, int k, boolean v) { int s = res(base, k); b.put(s, (byte) T_BOOLEAN); b.putInt(s + 4, v ? 1 : 0); }
+        public void retNumber(int base, int k, double v) { int s = res(base, k); b.put(s, (byte) T_NUMBER); b.putDouble(s + 8, v); }
+        public void retVector(int base, int k, float x, float y, float z) {
+            int s = res(base, k); b.put(s, (byte) T_VECTOR); b.putFloat(s + 8, x); b.putFloat(s + 12, y); b.putFloat(s + 16, z);
+        }
+        /** A registered name (pushed as the VM's own string for it: nothing to copy). */
+        public void retAtom(int base, int k, int atom) { int s = res(base, k); b.put(s, (byte) T_STRING); b.putInt(s + 4, atom); }
+        public void retHandle(int base, int k, int tag, long id) { int s = res(base, k); b.put(s, (byte) T_HANDLE); b.putInt(s + 4, tag); b.putLong(s + 8, id); }
+        /** The value at a stack index (one pushed with the C API's calls, say). */
+        public void retStack(int base, int k, int index) { int s = res(base, k); b.put(s, (byte) T_STACK); b.putInt(s + 4, index); }
+        /** A string: its bytes into the frame, or pushed (and left on the stack) when there's no room. */
+        public void retString(long L, int base, int k, byte[] v) {
+            int top = b.getInt(base + 8);
+            if (top + v.length > FRAME_SIZE) { pushBytes(L, v); retStack(base, k, top(L)); return; }
+            b.put(base + top, v);
+            b.putInt(base + 8, top + v.length);
+            int s = res(base, k); b.put(s, (byte) T_STRING); b.putInt(s + 4, -1); b.putInt(s + 8, top); b.putInt(s + 12, v.length);
+        }
+        public void retString(long L, int base, int k, String v) {
+            // (Plain ASCII straight into the frame; anything else encoded first.)
+            int n = v.length(), top = b.getInt(base + 8);
+            boolean ascii = top + n <= FRAME_SIZE;
+            for (int j = 0; ascii && j < n; j++) if (v.charAt(j) >= 0x80) ascii = false;
+            if (!ascii) { retString(L, base, k, v.getBytes(java.nio.charset.StandardCharsets.UTF_8)); return; }
+            for (int j = 0; j < n; j++) b.put(base + top + j, (byte) v.charAt(j));
+            b.putInt(base + 8, top + n);
+            int s = res(base, k); b.put(s, (byte) T_STRING); b.putInt(s + 4, -1); b.putInt(s + 8, top); b.putInt(s + 12, n);
+        }
+        /** An error with this message: return what this returns. */
+        public int error(long L, int base, String message) { retString(L, base, 0, message); return -1; }
+        /** A yield with n results (filled first): return what this returns. */
+        public static int yield(int n) { return -2 - n; }
+    }
 }

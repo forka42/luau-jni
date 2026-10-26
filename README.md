@@ -72,6 +72,32 @@ The figures are averages over rounds after warm-up.
 
 On the JVM the two bindings are level. On a native image, luau-java's FFM calls run through Native Image's slower foreign-call path and stop at a safepoint on the way back, while JNI calls don't. Pure Luau code ran at the same speed in every case, about 15 ns per arithmetic operation, so the whole difference is the cost of crossing between Luau and Java. `docs/benchmarks/charts.py` draws the charts from these numbers.
 
+### Crossing, call by call
+
+`./gradlew bench` (HotSpot) and `./gradlew benchNative` (a GraalVM native image, `-O3`) time each kind of crossing on its own (`src/bench`). On Windows 11 x64, JDK 25 and Oracle GraalVM 25, the best of 15 rounds of a million calls:
+
+| | Native image | HotSpot |
+|---|---:|---:|
+| Luau arithmetic, interpreted / native code (per iteration) | 13.2 / 3.5 ns | 13.2 / 3.4 ns |
+| Classic call: empty | 104 ns | 206 ns |
+| Classic call: two strings in, a number out | 305 ns | 547 ns |
+| Fast function: a handle and a name in, a number out | 172 ns | 276 ns |
+| Fast function: `part:GetSpeed()` (`__namecall`) | 167 ns | 286 ns |
+| Field: `rec.Speed` read | 42 ns | 42 ns |
+| Field: `rec.Speed` read, native code | 35 ns | 34 ns |
+| Field: `rec.Speed = i` | 42 ns | 40 ns |
+| Java calling a Luau function | 132 ns | 90 ns |
+
+A call from native code into Java costs about 100 ns on a native image and 200 ns on HotSpot, however little it carries. Fast functions make that the whole cost of a call, and fields avoid it.
+
+## Fast functions, handles and fields
+
+The classic API crosses into native code once per argument and result, and makes a Java string for every name. Three additions make an engine's API cheap to call:
+
+- **Fast functions** (`fastInit`, `pushFastFunction`, `LuauJni.Frame`). A call crosses once: its arguments are written into the VM's frame (native memory that Java reads as a direct `ByteBuffer`), Java's `FastCallbacks.call(id, L, base)` reads them there and writes its results there, and returns how many. It can also return an error or a yield. Names registered with `registerAtoms` cross as numbers (Luau's string atoms), so a property's or a method's name costs nothing to read. A fast function made with `namecall` serves as a `__namecall` metamethod, with the method's name first.
+- **Handles** (`setHandleMetatable`, `pushHandle`, `toHandle`, `drainCollected`). These are tagged userdata holding a 64-bit id of Java's, one object in Luau per id for as long as Luau holds it. Their tag's metatable gives them properties and methods, and Java is told when Luau lets one go.
+- **Fields** (`storeInit`, `defineFields`, `pushFieldIndex`, `pushFieldNewIndex`, `pushHandleRecord`, `drainChanged`). A handle's plain data (numbers, vectors, booleans, names, other handles) sits in a record in native memory that both sides read. `__index` and `__newindex` serve those fields without calling Java at all. A write sets the field's bit in the record's changed mask and lists the record (once) for Java to see to. Anything that isn't a field, such as a method, goes to the tag's fast function.
+
 ## Building
 
 You need JDK 17 or newer, CMake 3.22 or newer, and a C++17 compiler. On Windows that's Visual Studio's C++ tools; the build finds Visual Studio's own CMake if there's none on the `PATH`.

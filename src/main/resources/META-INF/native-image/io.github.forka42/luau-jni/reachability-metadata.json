@@ -8,6 +8,13 @@
       ]
     },
     {
+      "type": "io.github.forka42.luaujni.LuauJni$FastCallbacks",
+      "jniAccessible": true,
+      "methods": [
+        { "name": "call", "parameterTypes": ["int", "long", "int"] }
+      ]
+    },
+    {
       "type": "io.github.forka42.luaujni.LuauError",
       "jniAccessible": true,
       "methods": [

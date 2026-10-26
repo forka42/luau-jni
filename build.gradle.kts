@@ -75,6 +75,39 @@ tasks.test {
     jvmArgs("--enable-native-access=ALL-UNNAMED")
 }
 
+// The benchmarks (src/bench: Bench), on this platform's library: ./gradlew bench
+val bench = sourceSets.create("bench") {
+    compileClasspath += sourceSets.main.get().output
+    runtimeClasspath += sourceSets.main.get().output
+}
+tasks.register<JavaExec>("bench") {
+    description = "Times crossing between Luau and Java, and Luau's own code."
+    dependsOn(cmakeBuild)
+    classpath = bench.runtimeClasspath
+    mainClass = "io.github.forka42.luaujni.Bench"
+    systemProperty("luaujni.library.path", library.get().asFile.path)
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+}
+
+// The same, as a GraalVM native image (-O3; Native Image runs JNI differently from the JVM): ./gradlew benchNative
+// (-PgraalvmHome=, else GRAALVM_HOME, else the newest under ~/.graalvm-oracle or ~/.graalvm).
+val graalvmHome: File? = ((findProperty("graalvmHome") as String?) ?: System.getenv("GRAALVM_HOME"))?.let { file(it) }
+    ?: listOf(".graalvm-oracle", ".graalvm").firstNotNullOfOrNull { d ->
+        File(System.getProperty("user.home"), d).listFiles()?.filter { it.resolve("bin").isDirectory }?.maxByOrNull { it.name } }
+tasks.register<Exec>("benchNative") {
+    description = "Times the benchmarks as a GraalVM native image."
+    dependsOn(cmakeBuild, tasks.named("benchClasses"), tasks.classes)
+    val out = layout.buildDirectory.dir("bench-native").get().asFile
+    doFirst {
+        val home = graalvmHome ?: error("No GraalVM: give -PgraalvmHome=, or set GRAALVM_HOME")
+        out.mkdirs()
+        val ni = home.resolve("bin/native-image" + if (os == "windows") ".cmd" else "").path
+        val cp = (bench.runtimeClasspath.files + sourceSets.main.get().output.files).filter { it.exists() }.joinToString(File.pathSeparator)
+        providers.exec { commandLine(ni, "-O3", "--no-fallback", "--enable-native-access=ALL-UNNAMED", "-cp", cp, "-o", out.resolve("bench").path, "io.github.forka42.luaujni.Bench") }.result.get()
+    }
+    commandLine(out.resolve("bench").path + if (os == "windows") ".exe" else "", "-Dluaujni.library.path=" + library.get().asFile.path)
+}
+
 // The licence and Luau's notice in each jar.
 tasks.withType<Jar>().configureEach { into("META-INF") { from("LICENSE", "THIRD-PARTY-NOTICES.md") } }
 
